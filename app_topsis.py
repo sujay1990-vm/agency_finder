@@ -9,6 +9,7 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
+import altair as alt
 
 # -----------------------------
 # TOPSIS core
@@ -226,31 +227,115 @@ except Exception as e:
     st.stop()
 
 # Persist for stability between reruns
+# Persist for stability between reruns
 st.session_state.active_metrics = active_metrics
 st.session_state.weights_used = weights_used
 st.session_state.benefit_used = benefit_used
 st.session_state.ranking_df = ranking.copy()
 
-# Show normalized weights
-st.subheader("Weights actually used (normalized)")
-ws = np.array([weights_used[m] for m in active_metrics], dtype=float)
-ws = ws / (ws.sum() if ws.sum() > 0 else 1.0)
-st.write({m: round(float(w), 4) for m, w in zip(active_metrics, ws)})
+# ---- Display controls ----
+st.subheader("Display options")
+c1, c2, c3 = st.columns([1,1,2])
+with c1:
+    top_n = st.slider("Show top N", 5, min(50, len(ranking)), 15, step=5)
+with c2:
+    search = st.text_input("Filter AgencyCode (contains)", "")
+with c3:
+    show_contrib = st.toggle("Show per-metric contributions", value=True)
 
-# Results table + chart
-st.subheader("TOPSIS Ranking (higher CC = better)")
-st.dataframe(ranking, use_container_width=True)
+# Prep data
+rank_df = ranking.reset_index().rename(columns={"index": "AgentCode"})
+if search.strip():
+    rank_df = rank_df[rank_df["AgentCode"].astype(str).str.contains(search.strip(), case=False, na=False)]
 
-st.subheader("Closeness Coefficient by AgentCode")
-chart_df = ranking[["CC"]].copy()
-chart_df["AgentCode"] = ranking.index
-st.bar_chart(chart_df.set_index("AgentCode"))
+rank_df = rank_df.sort_values("CC", ascending=False).head(top_n)
 
-# Download
+# ---- Clean, horizontal bar of CC (sorted) ----
+st.subheader("Closeness Coefficient (higher = better)")
+
+bar = (
+    alt.Chart(rank_df)
+    .mark_bar()
+    .encode(
+        x=alt.X("CC:Q", title="Closeness Coefficient"),
+        y=alt.Y("AgentCode:N", sort="-x", title="AgentCode"),
+        tooltip=[
+            alt.Tooltip("AgentCode:N"),
+            alt.Tooltip("Rank:Q"),
+            alt.Tooltip("CC:Q", format=".3f"),
+            *[alt.Tooltip(m+":Q", format=".3f") for m in rank_df.columns if m in active_metrics]
+        ],
+        color=alt.Color("Rank:O", legend=None)
+    )
+    .properties(height=28*len(rank_df), width=800)
+)
+
+labels = (
+    alt.Chart(rank_df)
+    .mark_text(align="left", dx=4)
+    .encode(
+        x=alt.X("CC:Q"),
+        y=alt.Y("AgentCode:N", sort="-x"),
+        text=alt.Text("CC:Q", format=".3f")
+    )
+)
+
+st.altair_chart(bar + labels, use_container_width=True)
+
+# ---- Optional: show per-metric contributions (weighted & normalized) ----
+if show_contrib and len(active_metrics) > 1:
+    # Recreate the weighted normalized matrix V used in TOPSIS for the displayed rows
+    # (same math as in run_topsis)
+    X = rank_df[active_metrics].values.astype(float)
+    norms = np.linalg.norm(X, axis=0)
+    norms[norms == 0] = 1.0
+    R = X / norms
+    w_vec = np.array([weights_used[m] for m in active_metrics], dtype=float)
+    w_vec = w_vec / (w_vec.sum() if w_vec.sum() > 0 else 1.0)
+    V = R * w_vec  # weighted normalized metrics
+
+    # Normalize each row to sum=1 so we can show a % contribution bar
+    row_sums = V.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    contrib = V / row_sums
+
+    contrib_df = (
+        pd.DataFrame(contrib, columns=active_metrics)
+        .assign(AgentCode=rank_df["AgentCode"].values)
+        .melt(id_vars="AgentCode", var_name="Metric", value_name="Share")
+    )
+
+    st.subheader("What’s driving each score? (share of weighted normalized value)")
+    stacked = (
+        alt.Chart(contrib_df)
+        .mark_bar()
+        .encode(
+            x=alt.X("Share:Q", axis=alt.Axis(format="%"), title=None),
+            y=alt.Y("AgentCode:N", sort=list(rank_df.sort_values("CC", ascending=False)["AgentCode"])),
+            color=alt.Color("Metric:N", title="Metric"),
+            tooltip=[
+                alt.Tooltip("AgentCode:N"),
+                alt.Tooltip("Metric:N"),
+                alt.Tooltip("Share:Q", format=".1%")
+            ]
+        )
+        .properties(height=24*len(rank_df), width=800)
+    )
+    st.altair_chart(stacked, use_container_width=True)
+
+# ---- Tidy table with fewer columns & nicer formatting ----
+st.subheader("Ranking table")
+tbl = rank_df[["AgentCode", "Rank", "CC"] + [m for m in active_metrics if m in rank_df.columns]].copy()
+st.dataframe(
+    tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "CC": "{:.3f}"}), 
+    use_container_width=True
+)
+
+# ---- Download ----
 st.download_button(
     "Download ranking as CSV",
-    data=ranking.reset_index().to_csv(index=False).encode("utf-8"),
-    file_name="topsis_ranking.csv",
+    data=rank_df.to_csv(index=False).encode("utf-8"),
+    file_name="topsis_ranking_topN.csv",
     mime="text/csv",
 )
 
