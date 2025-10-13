@@ -1,10 +1,5 @@
 # app_topsis_from_kpi.py
 # Streamlit app: Run TOPSIS on the core business KPIs only.
-# KPIs used (if present in kpi.csv):
-#   - LossRatio (lower is better)
-#   - RetentionRate (higher is better)
-#   - EarnedPremium (higher is better)
-#   - SubmissionQuality (higher is better)
 
 import numpy as np
 import pandas as pd
@@ -25,7 +20,8 @@ def run_topsis(df, weights, benefit_flags):
 
     # Normalize weights
     w = np.array([weights[m] for m in metrics], dtype=float)
-    w = w / (w.sum() if w.sum() > 0 else 1.0)
+    s = w.sum()
+    w = w / (s if s > 0 else 1.0)
 
     # Vector normalization
     M = X.values.astype(float)
@@ -64,7 +60,6 @@ def run_topsis(df, weights, benefit_flags):
 st.set_page_config(page_title="TOPSIS — Core KPIs", page_icon="📊", layout="wide")
 st.title("📊 Agency TOPSIS — Core KPIs")
 
-# Initialize state
 for k, v in {
     "kpi_df": None,
     "active_metrics": [],
@@ -101,6 +96,7 @@ with st.sidebar:
 # -----------------------------
 # Load KPI once (cache)
 # -----------------------------
+@st.cache_data
 def load_kpi(file):
     df = pd.read_csv(file)
     for dcol in ["PeriodStart", "PeriodEnd"]:
@@ -111,7 +107,6 @@ def load_kpi(file):
 if kpi_file is not None:
     st.session_state.kpi_df = load_kpi(kpi_file)
 
-# Guard: need data
 if st.session_state.kpi_df is None:
     st.info("Upload your **kpi.csv** aggregated at the **AgentCode** level (one row per AgentCode for a period).")
     st.stop()
@@ -122,14 +117,13 @@ if "AgentCode" not in kpi.columns:
     st.stop()
 
 st.subheader("KPI preview")
-st.dataframe(kpi.head(20), use_container_width=True)
+st.dataframe(kpi.head(20), width="container")
 
 # -----------------------------
 # Core metrics only
 # -----------------------------
 CORE_METRICS = ["LossRatio", "RetentionRate", "EarnedPremium", "SubmissionQuality"]
 
-# which are present & numeric?
 numeric_cols = [c for c in kpi.columns if pd.api.types.is_numeric_dtype(kpi[c])]
 present_metrics = [m for m in CORE_METRICS if m in numeric_cols]
 
@@ -137,15 +131,13 @@ if not present_metrics:
     st.error("No usable core KPIs found. Need at least one of: LossRatio, RetentionRate, EarnedPremium, SubmissionQuality.")
     st.stop()
 
-# Default directions (benefit/cost)
 default_benefit_map = {
-    "LossRatio": False,         # lower is better
-    "RetentionRate": True,      # higher is better
-    "EarnedPremium": True,      # higher is better
-    "SubmissionQuality": True,  # higher is better
+    "LossRatio": False,
+    "RetentionRate": True,
+    "EarnedPremium": True,
+    "SubmissionQuality": True,
 }
 
-# Preset weights (before availability pruning)
 preset_weights = {
     "Balanced":                    {"LossRatio": 30, "RetentionRate": 30, "EarnedPremium": 20, "SubmissionQuality": 20},
     "Loss Ratio First":            {"LossRatio": 60, "RetentionRate": 20, "EarnedPremium": 10, "SubmissionQuality": 10},
@@ -154,30 +146,26 @@ preset_weights = {
     "Sales Efficiency (SubmissionQuality)": {"LossRatio": 15, "RetentionRate": 15, "EarnedPremium": 15, "SubmissionQuality": 55},
 }
 
-# Build working weight map limited to present metrics
 base_w = preset_weights[preset]
 weights_default = {m: base_w.get(m, 0) for m in present_metrics}
 
 # -----------------------------
-# Controls (simple: sliders only for present metrics)
+# Controls
 # -----------------------------
 def controls_ui():
     st.subheader("Tune weights (optional)")
     cols = st.columns(4)
-    weights_used = {}
-    benefit_used = {}
-    active_metrics = []
+    weights_used, benefit_used, active_metrics = {}, {}, []
 
     for i, m in enumerate(present_metrics):
         with cols[i % 4]:
             default_w = int(weights_default.get(m, 0))
-            w = st.slider(f"{m}", 0, 100, default_w, step=5, help=("Higher weight = more important"))
+            w = st.slider(f"{m}", 0, 100, default_w, step=5, help="Higher weight = more important")
             weights_used[m] = w
             benefit_used[m] = default_benefit_map[m]
             if w > 0:
                 active_metrics.append(m)
 
-    # show directions (fixed)
     with st.expander("Metric directions (fixed)"):
         st.markdown(
             "- **LossRatio**: lower is better  \n"
@@ -185,7 +173,6 @@ def controls_ui():
             "- **EarnedPremium**: higher is better  \n"
             "- **SubmissionQuality**: higher is better"
         )
-
     return active_metrics, weights_used, benefit_used
 
 if auto_run:
@@ -197,7 +184,7 @@ else:
         if not submitted:
             if st.session_state.ranking_df is not None:
                 st.subheader("TOPSIS Ranking (last run)")
-                st.dataframe(st.session_state.ranking_df, use_container_width=True)
+                st.dataframe(st.session_state.ranking_df, width="container")
             st.stop()
 
 # -----------------------------
@@ -226,8 +213,6 @@ except Exception as e:
     st.exception(e)
     st.stop()
 
-# Persist for stability between reruns
-# Persist for stability between reruns
 st.session_state.active_metrics = active_metrics
 st.session_state.weights_used = weights_used
 st.session_state.benefit_used = benefit_used
@@ -236,10 +221,12 @@ st.session_state.ranking_df = ranking.copy()
 # ---- Display controls ----
 st.subheader("Display options")
 c1, c2, c3 = st.columns([1,1,2])
+max_top = max(1, min(50, len(ranking)))          # robust slider bounds
+default_top = min(15, max_top)
 with c1:
-    top_n = st.slider("Show top N", 5, min(50, len(ranking)), 15, step=5)
+    top_n = st.slider("Show top N", 1, max_top, default_top, step=1)
 with c2:
-    search = st.text_input("Filter AgencyCode (contains)", "")
+    search = st.text_input("Filter AgentCode (contains)", "")
 with c3:
     show_contrib = st.toggle("Show per-metric contributions", value=True)
 
@@ -250,51 +237,38 @@ if search.strip():
 
 rank_df = rank_df.sort_values("CC", ascending=False).head(top_n)
 
-# ---- Clean, horizontal bar of CC (sorted) ----
+# ---- Closeness Coefficient bar ----
 st.subheader("Closeness Coefficient (higher = better)")
-
 bar = (
     alt.Chart(rank_df)
     .mark_bar()
     .encode(
         x=alt.X("CC:Q", title="Closeness Coefficient"),
         y=alt.Y("AgentCode:N", sort="-x", title="AgentCode"),
-        tooltip=[
-            alt.Tooltip("AgentCode:N"),
-            alt.Tooltip("Rank:Q"),
-            alt.Tooltip("CC:Q", format=".3f"),
-            *[alt.Tooltip(m+":Q", format=".3f") for m in rank_df.columns if m in active_metrics]
-        ],
-        color=alt.Color("Rank:O", legend=None)
+        tooltip=[alt.Tooltip("AgentCode:N"),
+                 alt.Tooltip("Rank:Q"),
+                 alt.Tooltip("CC:Q", format=".3f"),
+                 *[alt.Tooltip(m + ":Q", format=".3f") for m in rank_df.columns if m in active_metrics]],
+        color=alt.Color("Rank:O", legend=None),
     )
-    .properties(height=28*len(rank_df), width=800)
+    .properties(height=28 * len(rank_df), width=800)
 )
-
 labels = (
     alt.Chart(rank_df)
     .mark_text(align="left", dx=4)
-    .encode(
-        x=alt.X("CC:Q"),
-        y=alt.Y("AgentCode:N", sort="-x"),
-        text=alt.Text("CC:Q", format=".3f")
-    )
+    .encode(x=alt.X("CC:Q"), y=alt.Y("AgentCode:N", sort="-x"), text=alt.Text("CC:Q", format=".3f"))
 )
+st.altair_chart(bar + labels, width="container")
 
-st.altair_chart(bar + labels, use_container_width=True)
-
-# ---- Optional: show per-metric contributions (weighted & normalized) ----
-if show_contrib and len(active_metrics) > 1:
-    # Recreate the weighted normalized matrix V used in TOPSIS for the displayed rows
-    # (same math as in run_topsis)
+# ---- Per-metric contributions ----
+if show_contrib and len(active_metrics) > 1 and len(rank_df) > 0:
     X = rank_df[active_metrics].values.astype(float)
     norms = np.linalg.norm(X, axis=0)
     norms[norms == 0] = 1.0
     R = X / norms
     w_vec = np.array([weights_used[m] for m in active_metrics], dtype=float)
     w_vec = w_vec / (w_vec.sum() if w_vec.sum() > 0 else 1.0)
-    V = R * w_vec  # weighted normalized metrics
-
-    # Normalize each row to sum=1 so we can show a % contribution bar
+    V = R * w_vec
     row_sums = V.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0] = 1.0
     contrib = V / row_sums
@@ -304,7 +278,6 @@ if show_contrib and len(active_metrics) > 1:
         .assign(AgentCode=rank_df["AgentCode"].values)
         .melt(id_vars="AgentCode", var_name="Metric", value_name="Share")
     )
-
     st.subheader("What’s driving each score? (share of weighted normalized value)")
     stacked = (
         alt.Chart(contrib_df)
@@ -313,23 +286,16 @@ if show_contrib and len(active_metrics) > 1:
             x=alt.X("Share:Q", axis=alt.Axis(format="%"), title=None),
             y=alt.Y("AgentCode:N", sort=list(rank_df.sort_values("CC", ascending=False)["AgentCode"])),
             color=alt.Color("Metric:N", title="Metric"),
-            tooltip=[
-                alt.Tooltip("AgentCode:N"),
-                alt.Tooltip("Metric:N"),
-                alt.Tooltip("Share:Q", format=".1%")
-            ]
+            tooltip=[alt.Tooltip("AgentCode:N"), alt.Tooltip("Metric:N"), alt.Tooltip("Share:Q", format=".1%")],
         )
-        .properties(height=24*len(rank_df), width=800)
+        .properties(height=24 * len(rank_df), width=800)
     )
-    st.altair_chart(stacked, use_container_width=True)
+    st.altair_chart(stacked, width="container")
 
-# ---- Tidy table with fewer columns & nicer formatting ----
+# ---- Ranking table ----
 st.subheader("Ranking table")
 tbl = rank_df[["AgentCode", "Rank", "CC"] + [m for m in active_metrics if m in rank_df.columns]].copy()
-st.dataframe(
-    tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "CC": "{:.3f}"}), 
-    use_container_width=True
-)
+st.dataframe(tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "CC": "{:.3f}"}), width="container")
 
 # ---- Download ----
 st.download_button(
@@ -339,7 +305,6 @@ st.download_button(
     mime="text/csv",
 )
 
-# Executive explainer
 with st.expander("How to answer executive questions with presets"):
     st.markdown("""
 **Pick a preset** in the sidebar:
