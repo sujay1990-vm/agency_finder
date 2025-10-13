@@ -117,7 +117,7 @@ if "AgentCode" not in kpi.columns:
     st.stop()
 
 st.subheader("KPI preview")
-st.dataframe(kpi.head(20), width="container")
+st.dataframe(kpi.head(20), width=1200) 
 
 # -----------------------------
 # Core metrics only
@@ -184,7 +184,7 @@ else:
         if not submitted:
             if st.session_state.ranking_df is not None:
                 st.subheader("TOPSIS Ranking (last run)")
-                st.dataframe(st.session_state.ranking_df, width="container")
+                st.dataframe(st.session_state.ranking_df, width=1200)
             st.stop()
 
 # -----------------------------
@@ -258,7 +258,8 @@ labels = (
     .mark_text(align="left", dx=4)
     .encode(x=alt.X("CC:Q"), y=alt.Y("AgentCode:N", sort="-x"), text=alt.Text("CC:Q", format=".3f"))
 )
-st.altair_chart(bar + labels, width="container")
+st.altair_chart((bar + labels).properties(width=900))
+
 
 # ---- Per-metric contributions ----
 if show_contrib and len(active_metrics) > 1 and len(rank_df) > 0:
@@ -290,12 +291,13 @@ if show_contrib and len(active_metrics) > 1 and len(rank_df) > 0:
         )
         .properties(height=24 * len(rank_df), width=800)
     )
-    st.altair_chart(stacked, width="container")
+    st.altair_chart(stacked.properties(width=900))
+
 
 # ---- Ranking table ----
 st.subheader("Ranking table")
 tbl = rank_df[["AgentCode", "Rank", "CC"] + [m for m in active_metrics if m in rank_df.columns]].copy()
-st.dataframe(tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "CC": "{:.3f}"}), width="container")
+st.dataframe(tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "CC": "{:.3f}"}), width=1200 )
 
 # ---- Download ----
 st.download_button(
