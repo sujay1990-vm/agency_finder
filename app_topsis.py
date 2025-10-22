@@ -82,16 +82,18 @@ with st.sidebar:
 
     st.header("3) Executive preset")
     preset = st.selectbox(
-        "Choose a focus:",
-        [
-            "Balanced",
-            "Loss Ratio First",
-            "Growth (Earned Premium)",
-            "Loyalty (Retention)",
-            "Sales Efficiency (SubmissionQuality)",
-        ],
-        help="Sets default weights so you can answer executive questions quickly.",
-    )
+            "Choose a focus:",
+            [
+                "Balanced",
+                "Loss Ratio First",
+                "Expense Discipline",              # <— add this if you want it visible
+                "Growth (Earned Premium)",
+                "Loyalty (Retention)",
+                "Sales Efficiency (SubmissionQuality)",
+            ],
+            help="Sets default weights so you can answer executive questions quickly.",
+        )
+
 
 # -----------------------------
 # Load KPI once (cache)
@@ -122,46 +124,66 @@ st.dataframe(kpi.head(20), width=1200)
 # -----------------------------
 # Core metrics only
 # -----------------------------
-# CORE_METRICS = ["LossRatio_adj", "RetentionRate_adj", "EarnedPremium", "SubmissionQuality"]
-CORE_METRICS = ["RetentionRate_adj", "SubmissionQuality", "LossRatio_adj", "EarnedPremium"]
+
+CORE_METRICS = ["RetentionRate", "SubmissionQuality", "LossRatio", "ExpenseRatio", "EarnedPremium"]
 
 numeric_cols = [c for c in kpi.columns if pd.api.types.is_numeric_dtype(kpi[c])]
 present_metrics = [m for m in CORE_METRICS if m in numeric_cols]
 
 if not present_metrics:
-    st.error("No usable core KPIs found. Need at least one of: LossRatio_adj, RetentionRate_adj, EarnedPremium, SubmissionQuality.")
+    st.error("No usable core KPIs found. Need at least one of: LossRatio, ExpenseRatio, RetentionRate, EarnedPremium, SubmissionQuality.")
     st.stop()
 
+
+# Human-friendly labels & help for sliders
 # Human-friendly labels & help for sliders
 LABELS = {
-    "RetentionRate_adj": "Retention Rate",
+    "RetentionRate":  "Retention Rate",
     "SubmissionQuality": "Submission Quality",
-    "LossRatio_adj":     "Loss Ratio",
-    "EarnedPremium":   "EarnedPremium",
+    "LossRatio":      "Loss Ratio",
+    "ExpenseRatio":   "Expense Ratio",
+    "EarnedPremium":  "Earned Premium",
 }
 
 HELP = {
-    "RetentionRate_adj": "Adjusted, rank-preserving (0.50–0.95). Higher is better.",
-    "SubmissionQuality": "Bound/Submitted in window. Higher is better.",
-    "LossRatio_adj":     "Adjusted, rank-preserving (0.30–0.90). Lower is better.",
-    "EarnedPremium":   "Concave size measure within peer group (≤1 at peer P95). Higher is better.",
+    "RetentionRate":     "Higher is better.",
+    "SubmissionQuality": "Higher is better.",
+    "LossRatio":         "Lower is better.",
+    "ExpenseRatio":      "Lower is better (typ. 24–40%).",
+    "EarnedPremium":     "Use with care — bigger agencies tend to score higher.",
 }
 
 
+
 default_benefit_map = {
-    "LossRatio_adj": False,
-    "RetentionRate_adj": True,
+    "LossRatio": False,        # lower is better
+    "ExpenseRatio": False,     # lower is better
+    "RetentionRate": True,
     "EarnedPremium": True,
     "SubmissionQuality": True,
 }
 
 preset_weights = {
-    "Balanced":                    {"LossRatio_adj": 30, "RetentionRate_adj": 30, "EarnedPremium": 20, "SubmissionQuality": 20},
-    "Loss Ratio First":            {"LossRatio_adj": 60, "RetentionRate_adj": 20, "EarnedPremium": 10, "SubmissionQuality": 10},
-    "Growth (Earned Premium)":     {"LossRatio_adj": 15, "RetentionRate_adj": 15, "EarnedPremium": 55, "SubmissionQuality": 15},
-    "Loyalty (Retention)":         {"LossRatio_adj": 15, "RetentionRate_adj": 55, "EarnedPremium": 15, "SubmissionQuality": 15},
-    "Sales Efficiency (SubmissionQuality)": {"LossRatio_adj": 15, "RetentionRate_adj": 15, "EarnedPremium": 15, "SubmissionQuality": 55},
+    "Balanced": {
+        "LossRatio": 20, "ExpenseRatio": 20, "RetentionRate": 20, "EarnedPremium": 20, "SubmissionQuality": 20
+    },
+    "Loss Ratio First": {
+        "LossRatio": 50, "ExpenseRatio": 15, "RetentionRate": 20, "EarnedPremium": 5, "SubmissionQuality": 10
+    },
+    "Expense Discipline": {
+        "LossRatio": 20, "ExpenseRatio": 50, "RetentionRate": 15, "EarnedPremium": 5, "SubmissionQuality": 10
+    },
+    "Growth (Earned Premium)": {
+        "LossRatio": 15, "ExpenseRatio": 10, "RetentionRate": 15, "EarnedPremium": 50, "SubmissionQuality": 10
+    },
+    "Loyalty (Retention)": {
+        "LossRatio": 10, "ExpenseRatio": 10, "RetentionRate": 55, "EarnedPremium": 10, "SubmissionQuality": 15
+    },
+    "Sales Efficiency (SubmissionQuality)": {
+        "LossRatio": 10, "ExpenseRatio": 10, "RetentionRate": 15, "EarnedPremium": 10, "SubmissionQuality": 55
+    },
 }
+
 
 base_w = preset_weights[preset]
 weights_default = {m: base_w.get(m, 0) for m in present_metrics}
