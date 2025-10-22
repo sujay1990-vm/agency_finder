@@ -58,7 +58,7 @@ def run_topsis(df, weights, benefit_flags):
 # App config + state
 # -----------------------------
 st.set_page_config(page_title="TOPSIS — Core KPIs", page_icon="📊", layout="wide")
-st.title("📊 Agency TOPSIS — Core KPIs")
+st.title("📊 Agency Finder — Core KPIs")
 
 for k, v in {
     "kpi_df": None,
