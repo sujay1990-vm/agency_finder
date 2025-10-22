@@ -122,28 +122,45 @@ st.dataframe(kpi.head(20), width=1200)
 # -----------------------------
 # Core metrics only
 # -----------------------------
-CORE_METRICS = ["LossRatio", "RetentionRate", "EarnedPremium", "SubmissionQuality"]
+# CORE_METRICS = ["LossRatio_adj", "RetentionRate_adj", "EarnedPremium", "SubmissionQuality"]
+CORE_METRICS = ["RetentionRate_adj", "SubmissionQuality", "LossRatio_adj", "EarnedPremium"]
 
 numeric_cols = [c for c in kpi.columns if pd.api.types.is_numeric_dtype(kpi[c])]
 present_metrics = [m for m in CORE_METRICS if m in numeric_cols]
 
 if not present_metrics:
-    st.error("No usable core KPIs found. Need at least one of: LossRatio, RetentionRate, EarnedPremium, SubmissionQuality.")
+    st.error("No usable core KPIs found. Need at least one of: LossRatio_adj, RetentionRate_adj, EarnedPremium, SubmissionQuality.")
     st.stop()
 
+# Human-friendly labels & help for sliders
+LABELS = {
+    "RetentionRate_adj": "Retention Rate",
+    "SubmissionQuality": "Submission Quality",
+    "LossRatio_adj":     "Loss Ratio",
+    "EarnedPremium":   "EarnedPremium",
+}
+
+HELP = {
+    "RetentionRate_adj": "Adjusted, rank-preserving (0.50–0.95). Higher is better.",
+    "SubmissionQuality": "Bound/Submitted in window. Higher is better.",
+    "LossRatio_adj":     "Adjusted, rank-preserving (0.30–0.90). Lower is better.",
+    "EarnedPremium":   "Concave size measure within peer group (≤1 at peer P95). Higher is better.",
+}
+
+
 default_benefit_map = {
-    "LossRatio": False,
-    "RetentionRate": True,
+    "LossRatio_adj": False,
+    "RetentionRate_adj": True,
     "EarnedPremium": True,
     "SubmissionQuality": True,
 }
 
 preset_weights = {
-    "Balanced":                    {"LossRatio": 30, "RetentionRate": 30, "EarnedPremium": 20, "SubmissionQuality": 20},
-    "Loss Ratio First":            {"LossRatio": 60, "RetentionRate": 20, "EarnedPremium": 10, "SubmissionQuality": 10},
-    "Growth (Earned Premium)":     {"LossRatio": 15, "RetentionRate": 15, "EarnedPremium": 55, "SubmissionQuality": 15},
-    "Loyalty (Retention)":         {"LossRatio": 15, "RetentionRate": 55, "EarnedPremium": 15, "SubmissionQuality": 15},
-    "Sales Efficiency (SubmissionQuality)": {"LossRatio": 15, "RetentionRate": 15, "EarnedPremium": 15, "SubmissionQuality": 55},
+    "Balanced":                    {"LossRatio_adj": 30, "RetentionRate_adj": 30, "EarnedPremium": 20, "SubmissionQuality": 20},
+    "Loss Ratio First":            {"LossRatio_adj": 60, "RetentionRate_adj": 20, "EarnedPremium": 10, "SubmissionQuality": 10},
+    "Growth (Earned Premium)":     {"LossRatio_adj": 15, "RetentionRate_adj": 15, "EarnedPremium": 55, "SubmissionQuality": 15},
+    "Loyalty (Retention)":         {"LossRatio_adj": 15, "RetentionRate_adj": 55, "EarnedPremium": 15, "SubmissionQuality": 15},
+    "Sales Efficiency (SubmissionQuality)": {"LossRatio_adj": 15, "RetentionRate_adj": 15, "EarnedPremium": 15, "SubmissionQuality": 55},
 }
 
 base_w = preset_weights[preset]
@@ -160,20 +177,24 @@ def controls_ui():
     for i, m in enumerate(present_metrics):
         with cols[i % 4]:
             default_w = int(weights_default.get(m, 0))
-            w = st.slider(f"{m}", 0, 100, default_w, step=5, help="Higher weight = more important")
+            label = LABELS.get(m, m)
+            help_txt = HELP.get(m, "Higher weight = more important")
+            w = st.slider(label, 0, 100, default_w, step=5, help=help_txt)
             weights_used[m] = w
-            benefit_used[m] = default_benefit_map[m]
+            benefit_used[m] = default_benefit_map.get(m, True)
             if w > 0:
                 active_metrics.append(m)
 
     with st.expander("Metric directions (fixed)"):
-        st.markdown(
-            "- **LossRatio**: lower is better  \n"
-            "- **RetentionRate**: higher is better  \n"
-            "- **EarnedPremium**: higher is better  \n"
-            "- **SubmissionQuality**: higher is better"
-        )
+        lines = []
+        for m in present_metrics:
+            name = LABELS.get(m, m)
+            dir_txt = "higher is better" if default_benefit_map.get(m, True) else "lower is better"
+            lines.append(f"- **{name}**: {dir_txt}")
+        st.markdown("\n".join(lines))
+
     return active_metrics, weights_used, benefit_used
+
 
 if auto_run:
     active_metrics, weights_used, benefit_used = controls_ui()
@@ -280,18 +301,36 @@ if show_contrib and len(active_metrics) > 1 and len(rank_df) > 0:
         .melt(id_vars="AgentCode", var_name="Metric", value_name="Share")
     )
     st.subheader("What’s driving each score? (share of weighted normalized value)")
+
+    # Make a display label for the metric
+    _contrib = contrib_df.copy()
+    _contrib["MetricLabel"] = _contrib["Metric"].map(LABELS).fillna(_contrib["Metric"])
+
+    # Keep consistent legend order to match your UI order
+    metric_order = [LABELS.get(m, m) for m in present_metrics if m in _contrib["Metric"].unique()]
+
     stacked = (
-        alt.Chart(contrib_df)
+        alt.Chart(_contrib)
         .mark_bar()
         .encode(
             x=alt.X("Share:Q", axis=alt.Axis(format="%"), title=None),
-            y=alt.Y("AgentCode:N", sort=list(rank_df.sort_values("CC", ascending=False)["AgentCode"])),
-            color=alt.Color("Metric:N", title="Metric"),
-            tooltip=[alt.Tooltip("AgentCode:N"), alt.Tooltip("Metric:N"), alt.Tooltip("Share:Q", format=".1%")],
+            y=alt.Y("AgentCode:N",
+                    sort=list(rank_df.sort_values("CC", ascending=False)["AgentCode"])),
+            color=alt.Color(
+                "MetricLabel:N",
+                title="Metric",
+                scale=alt.Scale(domain=metric_order)  # preserves friendly order
+            ),
+            tooltip=[
+                alt.Tooltip("AgentCode:N", title="Agent"),
+                alt.Tooltip("MetricLabel:N", title="Metric"),
+                alt.Tooltip("Share:Q", format=".1%", title="Share"),
+            ],
         )
         .properties(height=24 * len(rank_df), width=800)
     )
     st.altair_chart(stacked.properties(width=900))
+
 
 
 # ---- Ranking table ----
