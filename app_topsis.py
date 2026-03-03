@@ -152,7 +152,11 @@ if kpi.empty:
     st.stop()
 
 st.subheader("KPI preview")
-st.dataframe(kpi, use_container_width=True, height=400)
+PREVIEW_COLS = ["AgentCode", "AgencyName", "LOB", "State", "ZipCode", "PeriodStart",
+                "LossRatio", "SubmissionQuality", "RetentionRate", "EarnedPremium",
+                "HitRatio", "CloseRatio", "CommissionAmount"]
+preview_cols = [c for c in PREVIEW_COLS if c in kpi.columns]
+st.dataframe(kpi[preview_cols], use_container_width=True, height=400)
 
 # -----------------------------
 # Core metrics only
@@ -274,7 +278,18 @@ df_metrics = kpi[["AgentCode"] + active_metrics].copy()
 for m in active_metrics:
     df_metrics[m] = pd.to_numeric(df_metrics[m], errors="coerce")
 
-df_metrics = df_metrics.set_index("AgentCode").replace([np.inf, -np.inf], np.nan).dropna(how="any")
+# Build AgentCode → AgencyName lookup before groupby loses it
+name_map = (
+    kpi[["AgentCode", "AgencyName"]].drop_duplicates("AgentCode").set_index("AgentCode")["AgencyName"]
+    if "AgencyName" in kpi.columns else pd.Series(dtype=str)
+)
+
+# Aggregate multiple rows per AgentCode (monthly data) into one row via mean
+df_metrics = (
+    df_metrics.groupby("AgentCode")[active_metrics].mean()
+    .replace([np.inf, -np.inf], np.nan)
+    .dropna(how="any")
+)
 if df_metrics.empty:
     st.warning("All rows dropped due to missing values across selected metrics. Fill data or reduce metrics.")
     st.stop()
@@ -302,42 +317,25 @@ default_top = min(15, max_top)
 with c1:
     top_n = st.slider("Show top N", 1, max_top, default_top, step=1)
 with c2:
-    search = st.text_input("Filter AgentCode (contains)", "")
+    search = st.text_input("Filter by agency name (contains)", "")
 
-# Prep data
+# Prep data — sort by Rank so bar chart order is always correct
 rank_df = ranking.reset_index().rename(columns={"index": "AgentCode"})
+
+# Join agency name
+rank_df["AgencyName"] = rank_df["AgentCode"].map(name_map).fillna(rank_df["AgentCode"].astype(str))
+
 if search.strip():
-    rank_df = rank_df[rank_df["AgentCode"].astype(str).str.contains(search.strip(), case=False, na=False)]
+    rank_df = rank_df[rank_df["AgencyName"].str.contains(search.strip(), case=False, na=False)]
 
-rank_df = rank_df.sort_values("CC", ascending=False).head(top_n)
+rank_df = rank_df.sort_values("Rank", ascending=True).head(top_n)
 
-# ---- Closeness Coefficient bar ----
-st.subheader("Closeness Coefficient (higher = better)")
-bar = (
-    alt.Chart(rank_df)
-    .mark_bar()
-    .encode(
-        x=alt.X("CC:Q", title="Closeness Coefficient"),
-        y=alt.Y("AgentCode:N", sort="-x", title="AgentCode"),
-        tooltip=[alt.Tooltip("AgentCode:N"),
-                 alt.Tooltip("Rank:Q"),
-                 alt.Tooltip("CC:Q", format=".3f"),
-                 *[alt.Tooltip(m + ":Q", format=".3f") for m in rank_df.columns if m in active_metrics]],
-        color=alt.Color("Rank:O", legend=None),
-    )
-    .properties(height=28 * len(rank_df), width=800)
-)
-labels = (
-    alt.Chart(rank_df)
-    .mark_text(align="left", dx=4)
-    .encode(x=alt.X("CC:Q"), y=alt.Y("AgentCode:N", sort="-x"), text=alt.Text("CC:Q", format=".3f"))
-)
-st.altair_chart((bar + labels).properties(width=900))
-
+# Explicit Y-axis order: Rank 1 at top, Rank N at bottom
+agency_order = rank_df["AgencyName"].tolist()
 
 # ---- Ranking table ----
 st.subheader("Ranking table")
-tbl = rank_df[["AgentCode", "Rank", "CC"] + [m for m in active_metrics if m in rank_df.columns]].copy()
+tbl = rank_df[["AgencyName", "Rank", "CC"] + [m for m in active_metrics if m in rank_df.columns]].copy()
 st.dataframe(
     tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "CC": "{:.3f}"}),
     use_container_width=True,
@@ -351,6 +349,33 @@ st.download_button(
     file_name="topsis_ranking_topN.csv",
     mime="text/csv",
 )
+
+# ---- Closeness Coefficient bar (below table) ----
+st.subheader("Closeness Coefficient (higher = better)")
+bar = (
+    alt.Chart(rank_df)
+    .mark_bar()
+    .encode(
+        x=alt.X("CC:Q", title="Closeness Coefficient"),
+        y=alt.Y("AgencyName:N", sort=agency_order, title="Agency"),
+        tooltip=[alt.Tooltip("AgencyName:N", title="Agency"),
+                 alt.Tooltip("Rank:Q"),
+                 alt.Tooltip("CC:Q", format=".3f"),
+                 *[alt.Tooltip(m + ":Q", format=".3f") for m in rank_df.columns if m in active_metrics]],
+        color=alt.Color("Rank:O", legend=None),
+    )
+    .properties(height=28 * len(rank_df), width=800)
+)
+labels = (
+    alt.Chart(rank_df)
+    .mark_text(align="right", dx=-6, color="black", fontSize=11)
+    .encode(
+        x=alt.X("CC:Q"),
+        y=alt.Y("AgencyName:N", sort=agency_order),
+        text=alt.Text("CC:Q", format=".3f"),
+    )
+)
+st.altair_chart((bar + labels).properties(width=900))
 
 with st.expander("How to answer executive questions with presets"):
     st.markdown("""
