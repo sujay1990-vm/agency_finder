@@ -368,7 +368,7 @@ bar = (
 )
 labels = (
     alt.Chart(rank_df)
-    .mark_text(align="right", dx=-6, color="white", fontSize=11)
+    .mark_text(align="right", dx=-6, color="black", fontSize=11)
     .encode(
         x=alt.X("CC:Q"),
         y=alt.Y("AgencyName:N", sort=agency_order),
