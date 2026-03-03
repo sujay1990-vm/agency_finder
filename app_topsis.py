@@ -86,13 +86,17 @@ with st.sidebar:
             [
                 "Balanced",
                 "Loss Ratio First",
-                "Expense Discipline",              # <— add this if you want it visible
+                "Expense Discipline",
                 "Growth (Earned Premium)",
                 "Loyalty (Retention)",
                 "Sales Efficiency (SubmissionQuality)",
             ],
             help="Sets default weights so you can answer executive questions quickly.",
         )
+
+_filter_lob   = None
+_filter_state = None
+_filter_zip   = None
 
 
 # -----------------------------
@@ -118,8 +122,37 @@ if "AgentCode" not in kpi.columns:
     st.error("kpi.csv must have an 'AgentCode' column (one row per AgentCode).")
     st.stop()
 
+# -----------------------------
+# Sidebar filters (LOB / State / ZipCode)
+# populated now that kpi is loaded
+# -----------------------------
+with st.sidebar:
+    st.header("4) Filters")
+    if "LOB" in kpi.columns:
+        lob_options = sorted(kpi["LOB"].dropna().unique().tolist())
+        _filter_lob = st.multiselect("Line of Business", lob_options, default=lob_options)
+    if "State" in kpi.columns:
+        state_options = sorted(kpi["State"].dropna().unique().tolist())
+        _filter_state = st.multiselect("State", state_options, default=state_options)
+    if "ZipCode" in kpi.columns:
+        zip_pool = kpi if _filter_state is None else kpi[kpi["State"].isin(_filter_state)]
+        zip_options = sorted(zip_pool["ZipCode"].dropna().astype(str).unique().tolist())
+        _filter_zip = st.multiselect("Zip Code", zip_options, default=zip_options)
+
+# Apply filters
+if _filter_lob   is not None and "LOB"     in kpi.columns:
+    kpi = kpi[kpi["LOB"].isin(_filter_lob)]
+if _filter_state is not None and "State"   in kpi.columns:
+    kpi = kpi[kpi["State"].isin(_filter_state)]
+if _filter_zip   is not None and "ZipCode" in kpi.columns:
+    kpi = kpi[kpi["ZipCode"].astype(str).isin(_filter_zip)]
+
+if kpi.empty:
+    st.warning("No data matches the selected filters. Adjust the filters in the sidebar.")
+    st.stop()
+
 st.subheader("KPI preview")
-st.dataframe(kpi.head(20), width=1200) 
+st.dataframe(kpi, use_container_width=True, height=400)
 
 # -----------------------------
 # Core metrics only
@@ -227,7 +260,7 @@ else:
         if not submitted:
             if st.session_state.ranking_df is not None:
                 st.subheader("TOPSIS Ranking (last run)")
-                st.dataframe(st.session_state.ranking_df, width=1200)
+                st.dataframe(st.session_state.ranking_df, use_container_width=True, height=600)
             st.stop()
 
 # -----------------------------
@@ -263,15 +296,13 @@ st.session_state.ranking_df = ranking.copy()
 
 # ---- Display controls ----
 st.subheader("Display options")
-c1, c2, c3 = st.columns([1,1,2])
-max_top = max(1, min(50, len(ranking)))          # robust slider bounds
+c1, c2 = st.columns([1, 2])
+max_top = max(1, min(50, len(ranking)))
 default_top = min(15, max_top)
 with c1:
     top_n = st.slider("Show top N", 1, max_top, default_top, step=1)
 with c2:
     search = st.text_input("Filter AgentCode (contains)", "")
-with c3:
-    show_contrib = st.toggle("Show per-metric contributions", value=True)
 
 # Prep data
 rank_df = ranking.reset_index().rename(columns={"index": "AgentCode"})
@@ -304,61 +335,14 @@ labels = (
 st.altair_chart((bar + labels).properties(width=900))
 
 
-# ---- Per-metric contributions ----
-if show_contrib and len(active_metrics) > 1 and len(rank_df) > 0:
-    X = rank_df[active_metrics].values.astype(float)
-    norms = np.linalg.norm(X, axis=0)
-    norms[norms == 0] = 1.0
-    R = X / norms
-    w_vec = np.array([weights_used[m] for m in active_metrics], dtype=float)
-    w_vec = w_vec / (w_vec.sum() if w_vec.sum() > 0 else 1.0)
-    V = R * w_vec
-    row_sums = V.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1.0
-    contrib = V / row_sums
-
-    contrib_df = (
-        pd.DataFrame(contrib, columns=active_metrics)
-        .assign(AgentCode=rank_df["AgentCode"].values)
-        .melt(id_vars="AgentCode", var_name="Metric", value_name="Share")
-    )
-    st.subheader("What’s driving each score? (share of weighted normalized value)")
-
-    # Make a display label for the metric
-    _contrib = contrib_df.copy()
-    _contrib["MetricLabel"] = _contrib["Metric"].map(LABELS).fillna(_contrib["Metric"])
-
-    # Keep consistent legend order to match your UI order
-    metric_order = [LABELS.get(m, m) for m in present_metrics if m in _contrib["Metric"].unique()]
-
-    stacked = (
-        alt.Chart(_contrib)
-        .mark_bar()
-        .encode(
-            x=alt.X("Share:Q", axis=alt.Axis(format="%"), title=None),
-            y=alt.Y("AgentCode:N",
-                    sort=list(rank_df.sort_values("CC", ascending=False)["AgentCode"])),
-            color=alt.Color(
-                "MetricLabel:N",
-                title="Metric",
-                scale=alt.Scale(domain=metric_order)  # preserves friendly order
-            ),
-            tooltip=[
-                alt.Tooltip("AgentCode:N", title="Agent"),
-                alt.Tooltip("MetricLabel:N", title="Metric"),
-                alt.Tooltip("Share:Q", format=".1%", title="Share"),
-            ],
-        )
-        .properties(height=24 * len(rank_df), width=800)
-    )
-    st.altair_chart(stacked.properties(width=900))
-
-
-
 # ---- Ranking table ----
 st.subheader("Ranking table")
 tbl = rank_df[["AgentCode", "Rank", "CC"] + [m for m in active_metrics if m in rank_df.columns]].copy()
-st.dataframe(tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "CC": "{:.3f}"}), width=1200 )
+st.dataframe(
+    tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "CC": "{:.3f}"}),
+    use_container_width=True,
+    height=600,
+)
 
 # ---- Download ----
 st.download_button(
