@@ -60,6 +60,30 @@ def run_topsis(df, weights, benefit_flags):
 st.set_page_config(page_title="TOPSIS — Core KPIs", page_icon="📊", layout="wide")
 st.title("📊 Agency Finder — Core KPIs")
 
+st.markdown("""
+<style>
+/* Multiselect input box — visible border */
+.stMultiSelect [data-baseweb="select"] > div {
+    border: 1.5px solid #888 !important;
+    border-radius: 6px !important;
+    background-color: #1e1e2e !important;
+}
+
+/* Dropdown popup panel */
+[data-baseweb="popover"] > div {
+    border: 2px solid #4a9eff !important;
+    border-radius: 8px !important;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6) !important;
+    background-color: #1e1e2e !important;
+}
+
+/* Individual option rows on hover */
+[data-baseweb="menu"] [role="option"]:hover {
+    background-color: #2a2a3e !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 for k, v in {
     "kpi_df": None,
     "active_metrics": [],
