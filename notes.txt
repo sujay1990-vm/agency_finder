@@ -4,4 +4,11 @@ New business / renewals
 LOB - work comp 40-80, mean 50, comm auto , business owners policy
 hit ratio, quote to bound ratio ( bound/ quote ), close ratio ( bound / submission ) 
 add another column , declined / withdrawn value , submitted - quoted 
-Add agency names
+
+take the numbers out, keep the titles
+remove Run mode , run by default
+Increase Font on Filter ( Line of Business, State, Zip Code )
+Agency Finder Title
+Kpi Preview -> Preview
+Tables - Center aligned
+CC - Closeness Coefficient
