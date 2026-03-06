@@ -6,6 +6,32 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
+
+_TABLE_CSS = """
+<style>
+.af-table { width:100%; border-collapse:collapse; }
+.af-table th { text-align:center; background-color:#262730; color:white;
+               padding:8px 14px; border-bottom:2px solid #555; white-space:nowrap; }
+.af-table td { text-align:center; padding:6px 14px; border-bottom:1px solid #2a2a3e; }
+.af-table tr:nth-child(even) td { background-color:#1a1a2e; }
+</style>
+"""
+
+def _html_table(df, fmt=None, max_height=400):
+    """Render a DataFrame as a fully center-aligned HTML table (fast path)."""
+    if fmt:
+        df = df.copy()
+        for col, f in fmt.items():
+            if col in df.columns:
+                df[col] = df[col].apply(lambda x, _f=f: _f.format(x) if pd.notna(x) else "")
+    html = df.to_html(index=False, border=0).replace(
+        'class="dataframe"', 'class="af-table"'
+    )
+    return (
+        f'{_TABLE_CSS}<div style="overflow:auto;max-height:{max_height}px;'
+        f'border:1px solid #333;border-radius:6px;">{html}</div>'
+    )
+
 # -----------------------------
 # TOPSIS core
 # -----------------------------
@@ -179,17 +205,17 @@ if kpi.empty:
     st.stop()
 
 st.subheader("Preview")
-PREVIEW_COLS = ["AgentCode", "AgencyName", "LOB", "State", "ZipCode", "PeriodStart",
+PREVIEW_COLS = ["AgencyName", "LOB", "State", "ZipCode", "PeriodStart",
                 "LossRatio", "SubmissionQuality", "RetentionRate", "EarnedPremium",
                 "HitRatio", "CloseRatio", "CommissionAmount"]
 preview_cols = [c for c in PREVIEW_COLS if c in kpi.columns]
-st.dataframe(
-    kpi[preview_cols].style.set_properties(**{"text-align": "center"}).set_table_styles(
-        [{"selector": "th", "props": [("text-align", "center")]}]
-    ),
-    use_container_width=True,
-    height=400,
-)
+_RATIO_COLS = {"LossRatio", "SubmissionQuality", "RetentionRate", "HitRatio", "CloseRatio", "ExpenseRatio"}
+_MONEY_COLS = {"EarnedPremium", "CommissionAmount"}
+_preview_fmt = {
+    **{c: "{:.3f}" for c in _RATIO_COLS if c in preview_cols},
+    **{c: "{:.2f}" for c in _MONEY_COLS if c in preview_cols},
+}
+st.markdown(_html_table(kpi[preview_cols], fmt=_preview_fmt, max_height=400), unsafe_allow_html=True)
 
 # -----------------------------
 # Core metrics only
@@ -360,13 +386,12 @@ agency_order = rank_df["AgencyName"].tolist()
 st.subheader("Ranking table")
 tbl = rank_df[["AgencyName", "Rank", "CC"] + [m for m in active_metrics if m in rank_df.columns]].copy()
 tbl = tbl.rename(columns={"CC": "Closeness Coefficient"})
-st.dataframe(
-    tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "Closeness Coefficient": "{:.3f}"})
-    .set_properties(**{"text-align": "center"})
-    .set_table_styles([{"selector": "th", "props": [("text-align", "center")]}]),
-    use_container_width=True,
-    height=600,
-)
+_TWO_DEC = {"EarnedPremium", "CommissionAmount"}
+_ranking_fmt = {
+    **{m: "{:.2f}" if m in _TWO_DEC else "{:.3f}" for m in active_metrics},
+    "Closeness Coefficient": "{:.3f}",
+}
+st.markdown(_html_table(tbl, fmt=_ranking_fmt, max_height=600), unsafe_allow_html=True)
 
 # ---- Download ----
 st.download_button(
@@ -378,41 +403,35 @@ st.download_button(
 
 # ---- Closeness Coefficient bar (below table) ----
 st.subheader("Closeness Coefficient (higher = better)")
+_bar_row_height = 48
+_chart_height = max(300, _bar_row_height * len(rank_df))
+_tooltips = [
+    alt.Tooltip("AgencyName:N", title="Agency"),
+    alt.Tooltip("Rank:Q"),
+    alt.Tooltip("CC:Q", format=".3f"),
+]
+for _m in active_metrics:
+    if _m in rank_df.columns:
+        _tooltips.append(alt.Tooltip(_m + ":Q", format=".3f"))
 bar = (
     alt.Chart(rank_df)
-    .mark_bar()
+    .mark_bar(size=30)
     .encode(
         x=alt.X("CC:Q", title="Closeness Coefficient"),
-        y=alt.Y("AgencyName:N", sort=agency_order, title="Agency"),
-        tooltip=[alt.Tooltip("AgencyName:N", title="Agency"),
-                 alt.Tooltip("Rank:Q"),
-                 alt.Tooltip("CC:Q", format=".3f"),
-                 *[alt.Tooltip(m + ":Q", format=".3f") for m in rank_df.columns if m in active_metrics]],
+        y=alt.Y("AgencyName:N", sort=agency_order, title=None,
+                axis=alt.Axis(labelFontSize=13, labelLimit=300)),
+        tooltip=_tooltips,
         color=alt.Color("Rank:O", legend=None),
     )
-    .properties(height=28 * len(rank_df), width=800)
+    .properties(height=_chart_height)
 )
 labels = (
     alt.Chart(rank_df)
-    .mark_text(align="right", dx=-6, color="black", fontSize=11)
+    .mark_text(align="right", dx=-6, color="black", fontSize=12)
     .encode(
         x=alt.X("CC:Q"),
         y=alt.Y("AgencyName:N", sort=agency_order),
         text=alt.Text("CC:Q", format=".3f"),
     )
 )
-st.altair_chart((bar + labels).properties(width=900))
-
-with st.expander("How to answer executive questions with presets"):
-    st.markdown("""
-**Pick a preset** in the sidebar:
-
-- **Loss Ratio First** → “Show me agencies that keep losses low, even if it costs growth.”
-- **Growth (Earned Premium)** → “Who drives the most premium, accepting some risk.”
-- **Loyalty (Retention)** → “Who keeps the book renewing.”
-- **Sales Efficiency (SubmissionQuality)** → “Who converts pipeline to bound business best.”
-- **Balanced** → Blended view across all four KPIs.
-
-You can fine-tune the sliders if needed.  
-Weights are normalized automatically over the metrics you’ve enabled.
-""")
+st.altair_chart((bar + labels).properties(width="container"), use_container_width=True)
