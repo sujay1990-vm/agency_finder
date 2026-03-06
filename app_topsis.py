@@ -81,6 +81,12 @@ st.markdown("""
 [data-baseweb="menu"] [role="option"]:hover {
     background-color: #2a2a3e !important;
 }
+
+/* Larger font for sidebar filter labels */
+[data-testid="stSidebar"] .stMultiSelect label p {
+    font-size: 1.15rem !important;
+    font-weight: 600 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -98,13 +104,10 @@ for k, v in {
 # Sidebar: upload + mode + preset
 # -----------------------------
 with st.sidebar:
-    st.header("1) Upload KPI file")
+    st.header("Upload KPI file")
     kpi_file = st.file_uploader("kpi.csv (with AgentCode)", type=["csv"])
 
-    st.header("2) Run mode")
-    auto_run = st.toggle("Auto-run on change", value=True, help="If off, use the form’s Run TOPSIS button.")
-
-    st.header("3) Executive preset")
+    st.header("Executive preset")
     preset = st.selectbox(
             "Choose a focus:",
             [
@@ -151,7 +154,7 @@ if "AgentCode" not in kpi.columns:
 # populated now that kpi is loaded
 # -----------------------------
 with st.sidebar:
-    st.header("4) Filters")
+    st.header("Filters")
     if "LOB" in kpi.columns:
         lob_options = sorted(kpi["LOB"].dropna().unique().tolist())
         _filter_lob = st.multiselect("Line of Business", lob_options, default=lob_options)
@@ -175,12 +178,18 @@ if kpi.empty:
     st.warning("No data matches the selected filters. Adjust the filters in the sidebar.")
     st.stop()
 
-st.subheader("KPI preview")
+st.subheader("Preview")
 PREVIEW_COLS = ["AgentCode", "AgencyName", "LOB", "State", "ZipCode", "PeriodStart",
                 "LossRatio", "SubmissionQuality", "RetentionRate", "EarnedPremium",
                 "HitRatio", "CloseRatio", "CommissionAmount"]
 preview_cols = [c for c in PREVIEW_COLS if c in kpi.columns]
-st.dataframe(kpi[preview_cols], use_container_width=True, height=400)
+st.dataframe(
+    kpi[preview_cols].style.set_properties(**{"text-align": "center"}).set_table_styles(
+        [{"selector": "th", "props": [("text-align", "center")]}]
+    ),
+    use_container_width=True,
+    height=400,
+)
 
 # -----------------------------
 # Core metrics only
@@ -279,17 +288,7 @@ def controls_ui():
     return active_metrics, weights_used, benefit_used
 
 
-if auto_run:
-    active_metrics, weights_used, benefit_used = controls_ui()
-else:
-    with st.form("controls_form", clear_on_submit=False):
-        active_metrics, weights_used, benefit_used = controls_ui()
-        submitted = st.form_submit_button("Run TOPSIS")
-        if not submitted:
-            if st.session_state.ranking_df is not None:
-                st.subheader("TOPSIS Ranking (last run)")
-                st.dataframe(st.session_state.ranking_df, use_container_width=True, height=600)
-            st.stop()
+active_metrics, weights_used, benefit_used = controls_ui()
 
 # -----------------------------
 # Compute ranking
@@ -360,8 +359,11 @@ agency_order = rank_df["AgencyName"].tolist()
 # ---- Ranking table ----
 st.subheader("Ranking table")
 tbl = rank_df[["AgencyName", "Rank", "CC"] + [m for m in active_metrics if m in rank_df.columns]].copy()
+tbl = tbl.rename(columns={"CC": "Closeness Coefficient"})
 st.dataframe(
-    tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "CC": "{:.3f}"}),
+    tbl.style.format({**{m: "{:.3f}" for m in active_metrics}, "Closeness Coefficient": "{:.3f}"})
+    .set_properties(**{"text-align": "center"})
+    .set_table_styles([{"selector": "th", "props": [("text-align", "center")]}]),
     use_container_width=True,
     height=600,
 )
